@@ -4,20 +4,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcutil/gcs"
-	"github.com/btcsuite/btcd/btcutil/gcs/builder"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcutil/v2/gcs"
+	"github.com/btcsuite/btcd/btcutil/v2/gcs/builder"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/integration/rpctest"
 	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightninglabs/neutrino/banman"
 	"github.com/lightninglabs/neutrino/blockntfns"
@@ -875,6 +876,10 @@ func TestBlockManagerDetectBadPeers(t *testing.T) {
 // disconnect peers that serve us bad headers (headers that don't connect to
 // each other properly).
 func TestHandleHeaders(t *testing.T) {
+	if _, err := exec.LookPath("btcd"); err != nil {
+		t.Skip("btcd binary not in PATH: skipping integration test")
+	}
+
 	t.Parallel()
 
 	// First, we set up a block manager and a fake peer that will act as the

@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/walletdb"
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
 	"github.com/lightninglabs/neutrino/chainsync"
@@ -32,26 +32,26 @@ import (
 // Block headers for testing captured from simnet network.
 var blockHdrs = []string{
 	"010000000000000000000000000000000000000000000000000000000000" +
-		"0000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3" +
-		"888a51323a9fb8aa4b1e5e4a45068653ffff7f2002000000",
-	"00000020f67ad7695d9b662a72ff3d8edbbb2de0bfa67b13974bb9910d11" +
-		"6d5cbd863e68c552826d121f12fcb288895d9488d189891ce0a6" +
-		"5a56193ea2ff3d4b99eabb875fac5a68ffff7f2003000000",
-	"000000200582f786cda8187a3bb13c044a70f11a5f299cbdb55dd43744a2" +
-		"de24cef76a72964688cc27da9f45261b8c35b00edea462f26469" +
-		"67fcb6052063d0140a1275de60ac5a68ffff7f2001000000",
-	"00000020f83e8ae2309315ff0a36646e2d43e7aa777b7aaa1eadb4876073" +
-		"e7a8dac11c1dc3a5e71065b6ab83ed8972d277de2670ceed1fc4" +
-		"3fd03f066cc84047d95eeaa360ac5a68ffff7f2002000000",
-	"000000203513820c27ba7b218bb6732e851ef404986f299f44b4275334d5" +
-		"eab0db09710835f6fc14632ebb23e141f680ae6aec6bdf76557b" +
-		"46daf1b4c0160631d89e1ac461ac5a68ffff7f2000000000",
+		"000000000000696ad20e2dd4365c7459b4a4a5af743d5e92c6da" +
+		"3229e6532cd605f6533f2a5b45068653ffff7f2002000000",
+	"040000001a749c7406b9f36bcaae32eb3b361d9a92381dca0234369d82b3" +
+		"e5dd9bf8e6a60000000000000000000000000000000000000000" +
+		"00000000000000000000000081068653ffff7f2000000000",
+	"040000007bcf4d3362e81ea8d0f72b34671c7753315cd306af8d0d1b3cfc" +
+		"2d89f78e656a0000000000000000000000000000000000000000" +
+		"000000000000000000000000bd068653ffff7f2002000000",
+	"0400000078e4473a82cbd71461f1e0d8f1e8e38a6fd59f0e3b20864bc849" +
+		"866a28ee012c0000000000000000000000000000000000000000" +
+		"000000000000000000000000f9068653ffff7f2002000000",
+	"0400000016446c72c650851f9e39ef028f2877c2cb67c7505050878a1596" +
+		"0130fe0ddc4d0000000000000000000000000000000000000000" +
+		"00000000000000000000000035078653ffff7f2028000000",
 }
 
 // Filter headers for testing captured from simnet network.
 var filterHdrs = []string{
-	"b2ef0f5c5d790832d79fc9c9a7b3cef02dd94f143c63feba9d836248cad6" +
-		"24cf",
+	"1111a8aa2a0cb91267c259e5e60e58364cb5b39eb2170a59ca46122e53a1" +
+		"65e8",
 	"b14a448b043b12401327695318318bbb53ec955e1e7963e3fd569a450448" +
 		"9177",
 	"75ae9eebc6e956fcb4fa00853aec5f252cf0046ed03587feece580386a6c" +
@@ -1178,7 +1178,7 @@ func TestHeaderMetadataStorage(t *testing.T) {
 		},
 		{
 			name:         "AddsFilterHeaderMetadataToFile",
-			networkMagic: wire.TestNet4,
+			networkMagic: wire.TestNet3,
 			version:      0,
 			headerType:   headerfs.RegularFilter,
 			startHeight:  3,
@@ -1236,7 +1236,7 @@ func TestHeaderMetadataStorage(t *testing.T) {
 				networkMagic := wire.BitcoinNet(
 					binary.LittleEndian.Uint32(net),
 				)
-				require.Equal(v.tc, wire.TestNet4, networkMagic)
+				require.Equal(v.tc, wire.TestNet3, networkMagic)
 
 				version := data[versionOffset]
 				require.Equal(v.tc, uint8(0), version)
@@ -4577,7 +4577,7 @@ func TestHeaderValidationOnBlockHeadersPair(t *testing.T) {
 			prep: func(tCP chaincfg.Params) prep {
 				opts := &ImportOptions{
 					TargetChainParams: tCP,
-					ValidationFlags:   blockchain.BFFastAdd,
+					ValidationFlags:   blockchain.BFFastAdd | blockchain.BFNoPoWCheck,
 				}
 				bS := opts.createBlockHeaderImportSrc()
 				bHV := opts.createBlockHeaderValidator(bS)

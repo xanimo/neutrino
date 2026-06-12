@@ -6,9 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/lightninglabs/neutrino/blockntfns"
 )
 
@@ -235,7 +234,7 @@ func (b *Broadcaster) rebroadcast(txs map[chainhash.Hash]*wire.MsgTx,
 
 	log.Debugf("Re-broadcasting %d transactions", len(txs))
 
-	sortedTxs := wtxmgr.DependencySort(txs)
+	sortedTxs := dependencySort(txs)
 	for _, tx := range sortedTxs {
 		// Before attempting to broadcast this transaction, we check
 		// whether we are shutting down.

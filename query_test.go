@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/gcs"
-	"github.com/btcsuite/btcd/btcutil/gcs/builder"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/btcutil/v2/gcs"
+	"github.com/btcsuite/btcd/btcutil/v2/gcs/builder"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightninglabs/neutrino/filterdb"
 	"github.com/lightninglabs/neutrino/headerfs"
@@ -33,7 +33,8 @@ var (
 	maxPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 255), bigOne)
 
 	// blockDataNet is the expected network in the test block data.
-	blockDataNet = wire.MainNet
+	// The file blocks1-256.bz2 contains Bitcoin mainnet blocks (0xD9B4BEF9).
+	blockDataNet = wire.BitcoinNet(0xD9B4BEF9)
 
 	// blockDataFile is the path to a file containing the first 256 blocks
 	// of the block chain.
@@ -60,12 +61,8 @@ func loadBlocks(t *testing.T, dataFile string, network wire.BitcoinNet) (
 	}()
 	dr := bzip2.NewReader(fi)
 
-	// Set the first block as the genesis block.
+	// Load all blocks from the file (Bitcoin mainnet blocks 1-256).
 	blocks := make([]*btcutil.Block, 0, 256)
-	genesis := btcutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-	blocks = append(blocks, genesis)
-
-	// Load the remaining blocks.
 	for height := 1; ; height++ {
 		var net uint32
 		err := binary.Read(dr, binary.LittleEndian, &net)

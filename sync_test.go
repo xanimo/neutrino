@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -17,19 +18,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/gcs/builder"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/btcutil/v2/gcs/builder"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/integration/rpctest"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btclog"
-	"github.com/btcsuite/btcwallet/wallet/txauthor"
 	"github.com/btcsuite/btcwallet/walletdb"
 	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
 	"github.com/lightninglabs/neutrino"
@@ -207,17 +208,16 @@ func init() {
 	rpcclient.UseLogger(rpcLogger)
 }
 
-// secSource is an implementation of btcwallet/txauthor/SecretsSource that
-// stores WitnessPubKeyHash addresses.
+// secSource stores P2PKH keys and scripts for test transaction signing.
 type secSource struct {
 	keys    map[string]*btcec.PrivateKey
 	scripts map[string]*[]byte
 	params  *chaincfg.Params
 }
 
-func (s *secSource) add(privKey *btcec.PrivateKey) (btcutil.Address, error) {
-	pubKeyHash := btcutil.Hash160(privKey.PubKey().SerializeCompressed())
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, s.params)
+func (s *secSource) add(privKey *btcec.PrivateKey) (address.Address, error) {
+	pubKeyHash := address.Hash160(privKey.PubKey().SerializeCompressed())
+	addr, err := address.NewAddressPubKeyHash(pubKeyHash, s.params)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (s *secSource) add(privKey *btcec.PrivateKey) (btcutil.Address, error) {
 }
 
 // GetKey is required by the txscript.KeyDB interface.
-func (s *secSource) GetKey(addr btcutil.Address) (*btcec.PrivateKey, bool,
+func (s *secSource) GetKey(addr address.Address) (*btcec.PrivateKey, bool,
 	error) {
 
 	privKey, ok := s.keys[addr.String()]
@@ -250,7 +250,7 @@ func (s *secSource) GetKey(addr btcutil.Address) (*btcec.PrivateKey, bool,
 }
 
 // GetScript is required by the txscript.ScriptDB interface.
-func (s *secSource) GetScript(addr btcutil.Address) ([]byte, error) {
+func (s *secSource) GetScript(addr address.Address) ([]byte, error) {
 	script, ok := s.scripts[addr.String()]
 	if !ok {
 		return nil, fmt.Errorf("No script for address %s", addr)
@@ -269,6 +269,35 @@ func newSecSource(params *chaincfg.Params) *secSource {
 		scripts: make(map[string]*[]byte),
 		params:  params,
 	}
+}
+
+// buildSignedTx creates and signs a P2PKH transaction spending inputs to out.
+func buildSignedTx(t *testing.T, inputs []*wire.TxIn, inputScripts [][]byte, out *wire.TxOut, src *secSource) *wire.MsgTx {
+	t.Helper()
+	tx := wire.NewMsgTx(wire.TxVersion)
+	for _, in := range inputs {
+		tx.AddTxIn(in)
+	}
+	tx.AddTxOut(out)
+	for i, txIn := range tx.TxIn {
+		script := inputScripts[i]
+		_, addrs, _, err := txscript.ExtractPkScriptAddrs(script, src.params)
+		if err != nil || len(addrs) == 0 {
+			t.Fatalf("extracting addresses from script: %v", err)
+		}
+		privKey, compressed, err := src.GetKey(addrs[0])
+		if err != nil {
+			t.Fatalf("getting key for address: %v", err)
+		}
+		sigScript, err := txscript.SignatureScript(
+			tx, i, script, txscript.SigHashAll, privKey, compressed,
+		)
+		if err != nil {
+			t.Fatalf("signing input %d: %v", i, err)
+		}
+		txIn.SignatureScript = sigScript
+	}
+	return tx
 }
 
 type neutrinoHarness struct {
@@ -319,7 +348,7 @@ var (
 	rescan                    *neutrino.Rescan
 	startBlock                headerfs.BlockStamp
 	secSrc                    *secSource
-	addr1, addr2, addr3       btcutil.Address
+	addr1, addr2, addr3       address.Address
 	script1, script2, script3 []byte
 	tx1, tx2                  *wire.MsgTx
 	ourOutPoint               wire.OutPoint
@@ -333,7 +362,7 @@ func testRescan(harness *neutrinoHarness, t *testing.T) {
 	modParams := harness.svc.ChainParams()
 	secSrc = newSecSource(&modParams)
 
-	newPkScript := func() (btcutil.Address, []byte, *wire.TxOut) {
+	newPkScript := func() (address.Address, []byte, *wire.TxOut) {
 		t.Helper()
 
 		privKey, err := btcec.NewPrivateKey()
@@ -541,35 +570,19 @@ func testStartRescan(harness *neutrinoHarness, t *testing.T) {
 		Value:    500000000,
 	}
 	// Spend the first transaction and mine a block.
-	authTx1, err := txauthor.NewUnsignedTransaction(
-		[]*wire.TxOut{
-			&out3,
-		},
-		// Fee rate is satoshis per kilobyte
-		1024000,
-		inSrc(*tx1),
-		&txauthor.ChangeSource{
-			NewScript: func() ([]byte, error) {
-				return script3, nil
-			},
-			ScriptSize: len(script3),
-		},
-	)
+	_, inputs1, _, scripts1, err := inSrc(*tx1)(btcutil.Amount(out3.Value))
 	if err != nil {
-		t.Fatalf("Couldn't create unsigned transaction: %s", err)
+		t.Fatalf("Couldn't get inputs from tx1: %s", err)
 	}
-	err = authTx1.AddAllInputScripts(secSrc)
-	if err != nil {
-		t.Fatalf("Couldn't sign transaction: %s", err)
-	}
+	signedTx1 := buildSignedTx(t, inputs1, scripts1, &out3, secSrc)
 	banPeer(t, harness.svc, harness.h2)
-	err = harness.svc.SendTransaction(authTx1.Tx)
+	err = harness.svc.SendTransaction(signedTx1)
 	if err != nil && !strings.Contains(err.Error(), "already have") {
 		t.Fatalf("Unable to send transaction to network: %s", err)
 	}
 	// SendTransaction does not know when the MsgTx was actually sent, only
 	// that a getdata request was received and a MsgTx queued to send.
-	waitTx(harness.h1.Client, authTx1.Tx.TxHash())
+	waitTx(harness.h1.Client, signedTx1.TxHash())
 	_, err = harness.h1.Client.Generate(1)
 	if err != nil {
 		t.Fatalf("Couldn't generate/submit block: %s", err)
@@ -589,33 +602,17 @@ func testStartRescan(harness *neutrinoHarness, t *testing.T) {
 			" %d", numTXs)
 	}
 	// Spend the second transaction and mine a block.
-	authTx2, err := txauthor.NewUnsignedTransaction(
-		[]*wire.TxOut{
-			&out3,
-		},
-		// Fee rate is satoshis per kilobyte
-		1024000,
-		inSrc(*tx2),
-		&txauthor.ChangeSource{
-			NewScript: func() ([]byte, error) {
-				return script3, nil
-			},
-			ScriptSize: len(script3),
-		},
-	)
+	_, inputs2, _, scripts2, err := inSrc(*tx2)(btcutil.Amount(out3.Value))
 	if err != nil {
-		t.Fatalf("Couldn't create unsigned transaction: %s", err)
+		t.Fatalf("Couldn't get inputs from tx2: %s", err)
 	}
-	err = authTx2.AddAllInputScripts(secSrc)
-	if err != nil {
-		t.Fatalf("Couldn't sign transaction: %s", err)
-	}
+	signedTx2 := buildSignedTx(t, inputs2, scripts2, &out3, secSrc)
 	banPeer(t, harness.svc, harness.h2)
-	err = harness.svc.SendTransaction(authTx2.Tx)
+	err = harness.svc.SendTransaction(signedTx2)
 	if err != nil && !strings.Contains(err.Error(), "already have") {
 		t.Fatalf("Unable to send transaction to network: %s", err)
 	}
-	waitTx(harness.h1.Client, authTx2.Tx.TxHash())
+	waitTx(harness.h1.Client, signedTx2.TxHash())
 	_, err = harness.h1.Client.Generate(1)
 	if err != nil {
 		t.Fatalf("Couldn't generate/submit block: %s", err)
@@ -687,9 +684,9 @@ func testStartRescan(harness *neutrinoHarness, t *testing.T) {
 	if spendReport.SpendingTx == nil {
 		t.Fatalf("Unable to find initial transaction")
 	}
-	if spendReport.SpendingTx.TxHash() != authTx1.Tx.TxHash() {
+	if spendReport.SpendingTx.TxHash() != signedTx1.TxHash() {
 		t.Fatalf("Redeeming transaction doesn't match expected "+
-			"transaction: want %s, got %s", authTx1.Tx.TxHash(),
+			"transaction: want %s, got %s", signedTx1.TxHash(),
 			spendReport.SpendingTx.TxHash())
 	}
 }
@@ -1077,6 +1074,9 @@ func testRandomBlocks(harness *neutrinoHarness, t *testing.T) {
 // a way to bootstrap neutrino nodes and significantly improving sync
 // performance.
 func TestNeutrinoSyncWithHeadersImport(t *testing.T) {
+	if _, err := exec.LookPath("btcd"); err != nil {
+		t.Skip("btcd binary not in PATH: skipping integration test")
+	}
 	rootCtx := context.Background()
 
 	// Create a btcd SimNet node and generate 800 blocks.
@@ -1261,6 +1261,9 @@ func TestNeutrinoSyncWithHeadersImport(t *testing.T) {
 // import, so its internal tracking state must be refreshed after import to
 // build correct P2P locators for the remaining chain.
 func TestNeutrinoImportThenP2PSync(t *testing.T) {
+	if _, err := exec.LookPath("btcd"); err != nil {
+		t.Skip("btcd binary not in PATH: skipping integration test")
+	}
 	rootCtx := context.Background()
 
 	// Create a btcd SimNet node and generate an initial chain.
@@ -1390,6 +1393,9 @@ func TestNeutrinoImportThenP2PSync(t *testing.T) {
 // TestNeutrinoSyncWithoutHeadersImport tests the standard synchronization
 // behavior of Neutrino without using the headers import feature.
 func TestNeutrinoSyncWithoutHeadersImport(t *testing.T) {
+	if _, err := exec.LookPath("btcd"); err != nil {
+		t.Skip("btcd binary not in PATH: skipping integration test")
+	}
 	rootCtx := context.Background()
 
 	// Create a btcd SimNet node and generate 800 blocks
@@ -1900,7 +1906,7 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 // from the rescan. At the end, the log should match one we precomputed based
 // on the flow of the test. The rescan starts at the genesis block and the
 // notifications continue until the `quit` channel is closed.
-func startRescan(t *testing.T, svc *neutrino.ChainService, addr btcutil.Address,
+func startRescan(t *testing.T, svc *neutrino.ChainService, addr address.Address,
 	startBlock *headerfs.BlockStamp, quit <-chan struct{}) (
 	*neutrino.Rescan, <-chan error) {
 
